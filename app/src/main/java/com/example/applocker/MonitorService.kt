@@ -40,36 +40,34 @@ class MonitorService : Service() {
             // Masih dalam masa kunci
             if (now < lockUntil) {
                 checkAndShowLock()
-                handler.postDelayed(this, 2000)
+                handler.postDelayed(this, 1500)
                 return
             }
 
-            // Cek apakah aplikasi target sedang dibuka
             val currentlyTarget = isAnyTargetInForeground()
 
             if (currentlyTarget) {
                 if (!isTargetInForeground) {
-                    // Baru masuk ke aplikasi target
                     lastTick = SystemClock.elapsedRealtime()
                     isTargetInForeground = true
                 } else {
-                    // Masih di dalam aplikasi target → tambah waktu
                     val elapsed = SystemClock.elapsedRealtime() - lastTick
-                    accumulatedMs += elapsed
-                    lastTick = SystemClock.elapsedRealtime()
+                    if (elapsed > 0) {
+                        accumulatedMs += elapsed
+                        lastTick = SystemClock.elapsedRealtime()
+                        
+                        // Simpan setiap kali bertambah
+                        prefs.edit().putLong("accumulated", accumulatedMs).apply()
+                    }
                 }
             } else {
                 isTargetInForeground = false
             }
 
-            // Simpan progress
-            prefs.edit().putLong("accumulated", accumulatedMs).apply()
-
             val offMinutes = prefs.getInt("off_minutes", 20)
             val limitMs = TimeUnit.MINUTES.toMillis(offMinutes.toLong())
 
             if (accumulatedMs >= limitMs) {
-                // Waktu habis → kunci
                 val waitMinutes = prefs.getInt("wait_minutes", 15)
                 lockUntil = now + TimeUnit.MINUTES.toMillis(waitMinutes.toLong())
                 accumulatedMs = 0L
@@ -80,18 +78,22 @@ class MonitorService : Service() {
                 checkAndShowLock()
             }
 
-            handler.postDelayed(this, 3000) // cek setiap 3 detik
+            handler.postDelayed(this, 2000) // cek setiap 2 detik
         }
     }
 
     private fun isAnyTargetInForeground(): Boolean {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val end = System.currentTimeMillis()
-        val start = end - 5000
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: return false
+        try {
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val end = System.currentTimeMillis()
+            val start = end - 8000
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: return false
 
-        val current = stats.maxByOrNull { it.lastTimeUsed }
-        return current != null && targetPackages.contains(current.packageName)
+            val current = stats.maxByOrNull { it.lastTimeUsed }
+            return current != null && targetPackages.contains(current.packageName)
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     private fun checkAndShowLock() {
@@ -119,7 +121,7 @@ class MonitorService : Service() {
         val channel = NotificationChannel(
             "monitor",
             "App Locker",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         )
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
@@ -130,6 +132,7 @@ class MonitorService : Service() {
             .setContentText("Memantau YouTube, Facebook & TikTok")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
