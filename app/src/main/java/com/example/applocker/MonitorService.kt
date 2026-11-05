@@ -1,20 +1,17 @@
 package com.example.applocker
 
-import android.app.*
-import android.app.usage.UsageStatsManager
-import android.content.Context
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import androidx.core.app.NotificationCompat
+import android.view.accessibility.AccessibilityEvent
 import java.util.concurrent.TimeUnit
 
-class MonitorService : Service() {
+class AppMonitorService : AccessibilityService() {
 
-    private val handler = Handler(Looper.getMainLooper())
-    private val targetPackages = listOf(
+    private val targetPackages = setOf(
         "com.google.android.youtube",
         "com.facebook.katana",
         "com.zhiliaoapp.musically",
@@ -22,118 +19,92 @@ class MonitorService : Service() {
     )
 
     private val prefs by lazy { getSharedPreferences("locker_prefs", MODE_PRIVATE) }
+    private val handler = Handler(Looper.getMainLooper())
 
     private var accumulatedMs = 0L
     private var lockUntil = 0L
     private var lastTick = 0L
+    private var isTargetActive = false
 
-    private val checkRunnable = object : Runnable {
+    private val tickRunnable = object : Runnable {
         override fun run() {
             if (!prefs.getBoolean("active", false)) {
-                stopSelf()
+                handler.removeCallbacks(this)
                 return
             }
 
             val now = System.currentTimeMillis()
 
             if (now < lockUntil) {
-                checkAndShowLock()
+                // Masih dikunci
+                if (isTargetActive) {
+                    val intent = Intent(this@AppMonitorService, LockActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                    startActivity(intent)
+                }
                 handler.postDelayed(this, 1000)
                 return
             }
 
-            // Deteksi lebih longgar
-            val isTarget = isAnyTargetInForeground()
-
-            if (isTarget) {
-                val currentTick = SystemClock.elapsedRealtime()
+            if (isTargetActive) {
+                val current = SystemClock.elapsedRealtime()
                 if (lastTick > 0) {
-                    val elapsed = currentTick - lastTick
-                    if (elapsed > 0 && elapsed < 5000) { // hindari lonjakan aneh
+                    val elapsed = current - lastTick
+                    if (elapsed in 1..3000) {
                         accumulatedMs += elapsed
                         prefs.edit().putLong("accumulated", accumulatedMs).apply()
                     }
                 }
-                lastTick = currentTick
+                lastTick = current
+
+                val offMinutes = prefs.getInt("off_minutes", 20)
+                val limitMs = TimeUnit.MINUTES.toMillis(offMinutes.toLong())
+
+                if (accumulatedMs >= limitMs) {
+                    val waitMinutes = prefs.getInt("wait_minutes", 15)
+                    lockUntil = now + TimeUnit.MINUTES.toMillis(waitMinutes.toLong())
+                    accumulatedMs = 0L
+                    prefs.edit()
+                        .putLong("lock_until", lockUntil)
+                        .putLong("accumulated", 0L)
+                        .apply()
+                }
             } else {
                 lastTick = 0L
             }
 
-            val offMinutes = prefs.getInt("off_minutes", 20)
-            val limitMs = TimeUnit.MINUTES.toMillis(offMinutes.toLong())
-
-            if (accumulatedMs >= limitMs) {
-                val waitMinutes = prefs.getInt("wait_minutes", 15)
-                lockUntil = now + TimeUnit.MINUTES.toMillis(waitMinutes.toLong())
-                accumulatedMs = 0L
-                prefs.edit()
-                    .putLong("lock_until", lockUntil)
-                    .putLong("accumulated", 0L)
-                    .apply()
-                checkAndShowLock()
-            }
-
-            handler.postDelayed(this, 800) // cek lebih sering
+            handler.postDelayed(this, 300)
         }
     }
 
-    private fun isAnyTargetInForeground(): Boolean {
-        try {
-            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val end = System.currentTimeMillis()
-            val start = end - 15000 // window lebih panjang
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: return false
-
-            val current = stats.maxByOrNull { it.lastTimeUsed }
-            return current != null && targetPackages.contains(current.packageName)
-        } catch (e: Exception) {
-            return false
+    override fun onServiceConnected() {
+        val info = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            notificationTimeout = 100
         }
-    }
-
-    private fun checkAndShowLock() {
-        if (isAnyTargetInForeground()) {
-            val intent = Intent(this, LockActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        createNotificationChannel()
-        startForeground(1, createNotification())
+        serviceInfo = info
 
         lockUntil = prefs.getLong("lock_until", 0)
         accumulatedMs = prefs.getLong("accumulated", 0)
-        lastTick = 0L
-
-        handler.post(checkRunnable)
+        handler.post(tickRunnable)
     }
 
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            "monitor",
-            "App Locker",
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val pkg = event.packageName?.toString() ?: return
+
+        isTargetActive = targetPackages.contains(pkg)
     }
 
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, "monitor")
-            .setContentTitle("App Locker aktif")
-            .setContentText("Memantau YouTube, Facebook & TikTok")
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setOngoing(true)
-            .build()
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onInterrupt() {}
 
     override fun onDestroy() {
-        handler.removeCallbacks(checkRunnable)
+        handler.removeCallbacks(tickRunnable)
         super.onDestroy()
     }
 }
