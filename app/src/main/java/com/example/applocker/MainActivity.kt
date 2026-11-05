@@ -31,7 +31,7 @@ class MainActivity : AppCompatActivity() {
     private val updateRunnable = object : Runnable {
         override fun run() {
             updateUsageText()
-            handler.postDelayed(this, 150) // update cepat supaya milidetik terlihat
+            handler.postDelayed(this, 150)
         }
     }
 
@@ -60,7 +60,6 @@ class MainActivity : AppCompatActivity() {
             if (isActive()) {
                 showPinDialog()
             } else {
-                // Cek izin
                 if (!hasUsageAccess()) {
                     requestUsageAccess()
                     return@setOnClickListener
@@ -69,17 +68,13 @@ class MainActivity : AppCompatActivity() {
                     requestOverlayPermission()
                     return@setOnClickListener
                 }
-                if (!isAccessibilityServiceEnabled()) {
-                    Toast.makeText(this, "Harap aktifkan Accessibility Service terlebih dahulu", Toast.LENGTH_LONG).show()
-                    openAccessibilitySettings()
-                    return@setOnClickListener
-                }
 
                 saveSettings()
                 prefs.edit().putBoolean("active", true).apply()
+                startMonitorService()
                 updateButton()
                 updateSpinnersEnabled()
-                Toast.makeText(this, "Mode penguncian AKTIF", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Mode penguncian AKTIF - Timer mulai berjalan", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -152,6 +147,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("OK") { _, _ ->
                 if (input.text.toString() == PIN) {
                     prefs.edit().putBoolean("active", false).apply()
+                    stopService(Intent(this, MonitorService::class.java))
                     updateButton()
                     updateSpinnersEnabled()
                     updateUsageText()
@@ -180,28 +176,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestOverlayPermission() {
         Toast.makeText(this, "Izinkan tampil di atas aplikasi lain", Toast.LENGTH_LONG).show()
-        val intent = Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$packageName")
-        )
-        startActivity(intent)
+        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val enabledServices = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-        return enabledServices.contains("$packageName/.AppMonitorService") ||
-                enabledServices.contains(packageName)
-    }
-
-    private fun openAccessibilitySettings() {
-        try {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        } catch (e: Exception) {
-            Toast.makeText(this, "Buka Settings → Accessibility secara manual", Toast.LENGTH_LONG).show()
-        }
+    private fun startMonitorService() {
+        val intent = Intent(this, MonitorService::class.java)
+        ContextCompat.startForegroundService(this, intent)
     }
 
     override fun onResume() {
