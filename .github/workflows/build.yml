@@ -27,10 +27,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Generate Gradle Wrapper (jika belum ada)
+      - name: Generate Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.7
+            gradle wrapper --gradle-version 8.9
           fi
           chmod +x gradlew
 
