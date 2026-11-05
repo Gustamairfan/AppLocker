@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.TimeUnit
 
@@ -16,15 +17,16 @@ class MonitorService : Service() {
     private val targetPackages = listOf(
         "com.google.android.youtube",
         "com.facebook.katana",
-        "com.zhiliaoapp.musically",          // TikTok global
-        "com.ss.android.ugc.aweme"           // TikTok alternatif
+        "com.zhiliaoapp.musically",
+        "com.ss.android.ugc.aweme"
     )
 
     private val prefs by lazy { getSharedPreferences("locker_prefs", MODE_PRIVATE) }
 
-    private var lastCheckedTime = 0L
     private var accumulatedMs = 0L
     private var lockUntil = 0L
+    private var lastTick = 0L
+    private var isTargetInForeground = false
 
     private val checkRunnable = object : Runnable {
         override fun run() {
@@ -38,14 +40,30 @@ class MonitorService : Service() {
             // Masih dalam masa kunci
             if (now < lockUntil) {
                 checkAndShowLock()
-                handler.postDelayed(this, 3000)
+                handler.postDelayed(this, 2000)
                 return
             }
 
-            // Hitung waktu penggunaan sejak pengecekan terakhir
-            val usageSinceLast = getUsageTimeSince(lastCheckedTime)
-            accumulatedMs += usageSinceLast
-            lastCheckedTime = now
+            // Cek apakah aplikasi target sedang dibuka
+            val currentlyTarget = isAnyTargetInForeground()
+
+            if (currentlyTarget) {
+                if (!isTargetInForeground) {
+                    // Baru masuk ke aplikasi target
+                    lastTick = SystemClock.elapsedRealtime()
+                    isTargetInForeground = true
+                } else {
+                    // Masih di dalam aplikasi target → tambah waktu
+                    val elapsed = SystemClock.elapsedRealtime() - lastTick
+                    accumulatedMs += elapsed
+                    lastTick = SystemClock.elapsedRealtime()
+                }
+            } else {
+                isTargetInForeground = false
+            }
+
+            // Simpan progress
+            prefs.edit().putLong("accumulated", accumulatedMs).apply()
 
             val offMinutes = prefs.getInt("off_minutes", 20)
             val limitMs = TimeUnit.MINUTES.toMillis(offMinutes.toLong())
@@ -60,11 +78,28 @@ class MonitorService : Service() {
                     .putLong("accumulated", 0L)
                     .apply()
                 checkAndShowLock()
-            } else {
-                prefs.edit().putLong("accumulated", accumulatedMs).apply()
             }
 
-            handler.postDelayed(this, 10_000) // cek setiap 10 detik
+            handler.postDelayed(this, 3000) // cek setiap 3 detik
+        }
+    }
+
+    private fun isAnyTargetInForeground(): Boolean {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val end = System.currentTimeMillis()
+        val start = end - 5000
+        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: return false
+
+        val current = stats.maxByOrNull { it.lastTimeUsed }
+        return current != null && targetPackages.contains(current.packageName)
+    }
+
+    private fun checkAndShowLock() {
+        if (isAnyTargetInForeground()) {
+            val intent = Intent(this, LockActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
         }
     }
 
@@ -75,44 +110,9 @@ class MonitorService : Service() {
 
         lockUntil = prefs.getLong("lock_until", 0)
         accumulatedMs = prefs.getLong("accumulated", 0)
-        lastCheckedTime = System.currentTimeMillis()
+        lastTick = SystemClock.elapsedRealtime()
 
         handler.post(checkRunnable)
-    }
-
-    private fun getUsageTimeSince(since: Long): Long {
-        if (since <= 0) return 0L
-
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val end = System.currentTimeMillis()
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, since, end) ?: return 0L
-
-        var total = 0L
-        for (stat in stats) {
-            if (targetPackages.contains(stat.packageName)) {
-                // Ambil waktu yang benar-benar baru digunakan
-                if (stat.lastTimeUsed >= since) {
-                    total += stat.totalTimeInForeground
-                }
-            }
-        }
-        // Batasi supaya tidak terlalu besar karena data harian
-        return total.coerceAtMost(TimeUnit.MINUTES.toMillis(2))
-    }
-
-    private fun checkAndShowLock() {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val end = System.currentTimeMillis()
-        val start = end - 3000
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: return
-
-        val current = stats.maxByOrNull { it.lastTimeUsed }
-        if (current != null && targetPackages.contains(current.packageName)) {
-            val intent = Intent(this, LockActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
     }
 
     private fun createNotificationChannel() {
