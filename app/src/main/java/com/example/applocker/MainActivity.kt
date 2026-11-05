@@ -29,11 +29,11 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private val updateRunnable = object : Runnable {
-    override fun run() {
-        updateUsageText()
-        handler.postDelayed(this, 150) // update 150ms sekali supaya milidetik terlihat
+        override fun run() {
+            updateUsageText()
+            handler.postDelayed(this, 150) // update cepat supaya milidetik terlihat
+        }
     }
-}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
             if (isActive()) {
                 showPinDialog()
             } else {
+                // Cek izin
                 if (!hasUsageAccess()) {
                     requestUsageAccess()
                     return@setOnClickListener
@@ -68,9 +69,14 @@ class MainActivity : AppCompatActivity() {
                     requestOverlayPermission()
                     return@setOnClickListener
                 }
+                if (!isAccessibilityServiceEnabled()) {
+                    Toast.makeText(this, "Harap aktifkan Accessibility Service terlebih dahulu", Toast.LENGTH_LONG).show()
+                    openAccessibilitySettings()
+                    return@setOnClickListener
+                }
+
                 saveSettings()
                 prefs.edit().putBoolean("active", true).apply()
-                startMonitorService()
                 updateButton()
                 updateSpinnersEnabled()
                 Toast.makeText(this, "Mode penguncian AKTIF", Toast.LENGTH_SHORT).show()
@@ -99,32 +105,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUsageText() {
-    if (!isActive()) {
-        tvUsage.text = "Status: Nonaktif"
-        return
+        if (!isActive()) {
+            tvUsage.text = "Status: Nonaktif"
+            return
+        }
+
+        val offMinutes = prefs.getInt("off_minutes", 20)
+        val limitMs = offMinutes * 60 * 1000L
+        val accumulated = prefs.getLong("accumulated", 0)
+        val remainingMs = (limitMs - accumulated).coerceAtLeast(0)
+
+        val lockUntil = prefs.getLong("lock_until", 0)
+        val now = System.currentTimeMillis()
+
+        if (now < lockUntil) {
+            val sisa = lockUntil - now
+            val m = (sisa / 60000).toInt()
+            val s = ((sisa % 60000) / 1000).toInt()
+            val ms = (sisa % 1000).toInt()
+            tvUsage.text = "SEDANG DIKUNCI\n%02d:%02d:%03d".format(m, s, ms)
+        } else {
+            val m = (remainingMs / 60000).toInt()
+            val s = ((remainingMs % 60000) / 1000).toInt()
+            val ms = (remainingMs % 1000).toInt()
+            tvUsage.text = "Waktu tersisa %02d:%02d:%03d dari %d menit".format(m, s, ms, offMinutes)
+        }
     }
-
-    val offMinutes = prefs.getInt("off_minutes", 20)
-    val limitMs = offMinutes * 60 * 1000L
-    val accumulated = prefs.getLong("accumulated", 0)
-    val remainingMs = (limitMs - accumulated).coerceAtLeast(0)
-
-    val lockUntil = prefs.getLong("lock_until", 0)
-    val now = System.currentTimeMillis()
-
-    if (now < lockUntil) {
-        val sisa = lockUntil - now
-        val m = (sisa / 60000).toInt()
-        val s = ((sisa % 60000) / 1000).toInt()
-        val ms = (sisa % 1000).toInt()
-        tvUsage.text = "SEDANG DIKUNCI\n%02d:%02d:%03d".format(m, s, ms)
-    } else {
-        val m = (remainingMs / 60000).toInt()
-        val s = ((remainingMs % 60000) / 1000).toInt()
-        val ms = (remainingMs % 1000).toInt()
-        tvUsage.text = "Waktu tersisa %02d:%02d:%03d dari %d menit".format(m, s, ms, offMinutes)
-    }
-}
 
     private fun saveSettings() {
         val offMin = if (spinnerOff.selectedItemPosition == 0) 20 else 30
@@ -146,7 +152,6 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("OK") { _, _ ->
                 if (input.text.toString() == PIN) {
                     prefs.edit().putBoolean("active", false).apply()
-                    stopService(Intent(this, MonitorService::class.java))
                     updateButton()
                     updateSpinnersEnabled()
                     updateUsageText()
@@ -169,7 +174,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestUsageAccess() {
-        Toast.makeText(this, "Aktifkan izin Usage Access untuk App Locker", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Aktifkan izin Usage Access", Toast.LENGTH_LONG).show()
         startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
     }
 
@@ -182,9 +187,21 @@ class MainActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    private fun startMonitorService() {
-        val intent = Intent(this, MonitorService::class.java)
-        ContextCompat.startForegroundService(this, intent)
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.contains("$packageName/.AppMonitorService") ||
+                enabledServices.contains(packageName)
+    }
+
+    private fun openAccessibilitySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Buka Settings → Accessibility secara manual", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onResume() {
