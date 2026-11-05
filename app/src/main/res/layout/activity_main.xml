@@ -58,7 +58,7 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <!-- Timer penggunaan -->
+    <!-- Ini yang penting: harus ada id tvUsage -->
     <TextView
         android:id="@+id/tvUsage"
         android:layout_width="match_parent"
