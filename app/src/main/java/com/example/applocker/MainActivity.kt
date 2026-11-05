@@ -28,12 +28,27 @@ class MainActivity : AppCompatActivity() {
     private val PIN = "1234"
     private val handler = Handler(Looper.getMainLooper())
 
-    private val updateRunnable = object : Runnable {
-        override fun run() {
-            updateUsageText()
-            handler.postDelayed(this, 5000) // update setiap 5 detik
-        }
+   private fun updateUsageText() {
+    if (!isActive()) {
+        tvUsage.text = "Status: Nonaktif"
+        return
     }
+
+    val offMinutes = prefs.getInt("off_minutes", 20)
+    val accumulated = prefs.getLong("accumulated", 0)
+    val usedMinutes = (accumulated / 60000).toInt()
+    val remaining = (offMinutes - usedMinutes).coerceAtLeast(0)
+
+    val lockUntil = prefs.getLong("lock_until", 0)
+    val now = System.currentTimeMillis()
+
+    if (now < lockUntil) {
+        val sisaKunci = ((lockUntil - now) / 60000).toInt() + 1
+        tvUsage.text = "SEDANG DIKUNCI\nSisa waktu kunci: $sisaKunci menit"
+    } else {
+        tvUsage.text = "Waktu tersisa $remaining menit dari $offMinutes"
+    }
+}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
