@@ -29,11 +29,11 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private val updateRunnable = object : Runnable {
-        override fun run() {
-            updateUsageText()
-            handler.postDelayed(this, 3000)
-        }
+    override fun run() {
+        updateUsageText()
+        handler.postDelayed(this, 150) // update 150ms sekali supaya milidetik terlihat
     }
+}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
