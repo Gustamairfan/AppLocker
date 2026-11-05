@@ -5,10 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.Spinner
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -19,8 +22,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerOff: Spinner
     private lateinit var spinnerWait: Spinner
     private lateinit var btnToggle: Button
+    private lateinit var tvUsage: TextView
+
     private val prefs by lazy { getSharedPreferences("locker_prefs", MODE_PRIVATE) }
-    private val PIN = "1234"   // Ganti PIN di sini jika mau
+    private val PIN = "1234"
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val updateRunnable = object : Runnable {
+        override fun run() {
+            updateUsageText()
+            handler.postDelayed(this, 5000) // update setiap 5 detik
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,24 +42,24 @@ class MainActivity : AppCompatActivity() {
         spinnerOff = findViewById(R.id.spinnerOff)
         spinnerWait = findViewById(R.id.spinnerWait)
         btnToggle = findViewById(R.id.btnToggle)
+        tvUsage = findViewById(R.id.tvUsage)
 
-        // Isi spinner
         val offOptions = arrayOf("20 menit", "30 menit")
         val waitOptions = arrayOf("15 menit", "20 menit")
         spinnerOff.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, offOptions)
         spinnerWait.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, waitOptions)
 
-        // Load setting sebelumnya
-        spinnerOff.setSelection(prefs.getInt("off_timer", 1))
+        spinnerOff.setSelection(prefs.getInt("off_timer", 0))
         spinnerWait.setSelection(prefs.getInt("wait_timer", 0))
+
         updateButton()
+        updateSpinnersEnabled()
+        updateUsageText()
 
         btnToggle.setOnClickListener {
             if (isActive()) {
-                // Minta PIN untuk menonaktifkan
                 showPinDialog()
             } else {
-                // Aktifkan
                 if (!hasUsageAccess()) {
                     requestUsageAccess()
                     return@setOnClickListener
@@ -59,6 +72,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("active", true).apply()
                 startMonitorService()
                 updateButton()
+                updateSpinnersEnabled()
                 Toast.makeText(this, "Mode penguncian AKTIF", Toast.LENGTH_SHORT).show()
             }
         }
@@ -73,6 +87,34 @@ class MainActivity : AppCompatActivity() {
         } else {
             btnToggle.text = "AKTIFKAN"
             btnToggle.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_dark))
+        }
+    }
+
+    private fun updateSpinnersEnabled() {
+        val enabled = !isActive()
+        spinnerOff.isEnabled = enabled
+        spinnerWait.isEnabled = enabled
+        spinnerOff.alpha = if (enabled) 1f else 0.5f
+        spinnerWait.alpha = if (enabled) 1f else 0.5f
+    }
+
+    private fun updateUsageText() {
+        if (!isActive()) {
+            tvUsage.text = "Status: Nonaktif"
+            return
+        }
+
+        val offMinutes = prefs.getInt("off_minutes", 20)
+        val accumulated = prefs.getLong("accumulated", 0)
+        val usedMinutes = (accumulated / 60000).toInt()
+        val lockUntil = prefs.getLong("lock_until", 0)
+        val now = System.currentTimeMillis()
+
+        if (now < lockUntil) {
+            val remaining = ((lockUntil - now) / 60000).toInt() + 1
+            tvUsage.text = "SEDANG DIKUNCI\nSisa waktu kunci: $remaining menit"
+        } else {
+            tvUsage.text = "Sudah digunakan: $usedMinutes menit dari $offMinutes menit"
         }
     }
 
@@ -98,6 +140,8 @@ class MainActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("active", false).apply()
                     stopService(Intent(this, MonitorService::class.java))
                     updateButton()
+                    updateSpinnersEnabled()
+                    updateUsageText()
                     Toast.makeText(this, "Mode penguncian DINONAKTIFKAN", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "PIN salah!", Toast.LENGTH_SHORT).show()
@@ -138,5 +182,13 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateButton()
+        updateSpinnersEnabled()
+        updateUsageText()
+        handler.post(updateRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        handler.removeCallbacks(updateRunnable)
     }
 }
