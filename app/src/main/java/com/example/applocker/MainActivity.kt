@@ -99,26 +99,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUsageText() {
-        if (!isActive()) {
-            tvUsage.text = "Status: Nonaktif"
-            return
-        }
-
-        val offMinutes = prefs.getInt("off_minutes", 20)
-        val accumulated = prefs.getLong("accumulated", 0)
-        val usedMinutes = (accumulated / 60000).toInt()
-        val remaining = (offMinutes - usedMinutes).coerceAtLeast(0)
-
-        val lockUntil = prefs.getLong("lock_until", 0)
-        val now = System.currentTimeMillis()
-
-        if (now < lockUntil) {
-            val sisaKunci = ((lockUntil - now) / 60000).toInt() + 1
-            tvUsage.text = "SEDANG DIKUNCI\nSisa waktu kunci: $sisaKunci menit"
-        } else {
-            tvUsage.text = "Waktu tersisa $remaining menit dari $offMinutes"
-        }
+    if (!isActive()) {
+        tvUsage.text = "Status: Nonaktif"
+        return
     }
+
+    val offMinutes = prefs.getInt("off_minutes", 20)
+    val limitMs = offMinutes * 60 * 1000L
+    val accumulated = prefs.getLong("accumulated", 0)
+    val remainingMs = (limitMs - accumulated).coerceAtLeast(0)
+
+    val lockUntil = prefs.getLong("lock_until", 0)
+    val now = System.currentTimeMillis()
+
+    if (now < lockUntil) {
+        val sisa = lockUntil - now
+        val m = (sisa / 60000).toInt()
+        val s = ((sisa % 60000) / 1000).toInt()
+        val ms = (sisa % 1000).toInt()
+        tvUsage.text = "SEDANG DIKUNCI\n%02d:%02d:%03d".format(m, s, ms)
+    } else {
+        val m = (remainingMs / 60000).toInt()
+        val s = ((remainingMs % 60000) / 1000).toInt()
+        val ms = (remainingMs % 1000).toInt()
+        tvUsage.text = "Waktu tersisa %02d:%02d:%03d dari %d menit".format(m, s, ms, offMinutes)
+    }
+}
 
     private fun saveSettings() {
         val offMin = if (spinnerOff.selectedItemPosition == 0) 20 else 30
